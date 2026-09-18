@@ -166,11 +166,7 @@ class RecallResult(BaseModel):
 
 
 TOP_K = 10
-EMBED_DIM = 1024
-QUERY_INSTRUCT = (
-    "Instruct: Given a web search query, retrieve relevant passages "
-    "that answer the query\nQuery:"
-)
+EMBED_DIM = 768
 
 KIND_VALUES = tuple(k.value for k in Kind)
 LIFECYCLE_VALUES = tuple(k.value for k in Lifecycle)

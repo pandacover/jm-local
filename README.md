@@ -18,19 +18,21 @@ Lookup, compose, and replay are not tools. Embed, rerank, and plan are not tools
 
 ## Setup
 
-1. Install [Ollama](https://ollama.com) and pull the embedding model:
+You do not start a long-running app yourself. An MCP host (Cursor, Claude Desktop, and similar) launches `jm` as a stdio subprocess using the config below. You only need the package installed, Ollama running, and that config.
+
+1. Install [Ollama](https://ollama.com), start it, and pull the embedding model:
 
 ```bash
-ollama pull qwen3-embedding:0.6b
+ollama pull nomic-embed-text:v1.5
 ```
 
-2. Install this package:
+2. Install this package (once), so the `jm` command exists:
 
 ```bash
 pip install .
 ```
 
-3. Point your MCP host at the stdio server:
+3. Point the MCP host at the stdio server. The host starts and stops `jm` for you:
 
 ```json
 {
@@ -46,9 +48,9 @@ pip install .
 }
 ```
 
-`python -m jm` is equivalent to `jm`.
+If `jm` is not on your PATH, set `command` to your Python and `args` to `["-m", "jm"]`. Running `python -m jm` in a terminal is only for debugging the stdio process; you still talk to it through the host.
 
-Set `JM_FAKE_EMBED=1` to skip Ollama (deterministic vectors, useful in tests).
+Set `JM_FAKE_EMBED=1` to skip Ollama (deterministic vectors, useful in tests). Cards already stored with a different embedding model should be re-ingested (or use a new `JM_DB`); vector width is 768.
 
 ## Cards
 
