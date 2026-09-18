@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 from typing import Protocol
 
-from jm.types import EMBED_DIM, QUERY_INSTRUCT
+from jm.types import EMBED_DIM
 
 TOKEN = re.compile(r"[A-Za-z0-9_]+")
 
@@ -57,25 +57,30 @@ class OllamaEmbedder:
     def __init__(
         self,
         host: str | None = None,
-        model: str = "qwen3-embedding:0.6b",
+        model: str | None = None,
         dim: int = EMBED_DIM,
         timeout: float = 60.0,
     ) -> None:
         self.host = (host or os.environ.get("OLLAMA_HOST") or "http://localhost:11434").rstrip(
             "/"
         )
-        self.model = model
+        self.model = (
+            model
+            or os.environ.get("JM_EMBED_MODEL")
+            or "nomic-embed-text:v1.5"
+        )
         self.dim = dim
         self.timeout = timeout
+        self.doc_prefix = "search_document: "
+        self.query_prefix = "search_query: "
 
     def embed_docs(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        return self._embed(texts)
+        return self._embed([f"{self.doc_prefix}{text}" for text in texts])
 
     def embed_query(self, text: str) -> list[float]:
-        instructed = f"{QUERY_INSTRUCT}{text}"
-        return self._embed([instructed])[0]
+        return self._embed([f"{self.query_prefix}{text}"])[0]
 
     def _embed(self, inputs: list[str]) -> list[list[float]]:
         payload = json.dumps({"model": self.model, "input": inputs}).encode()
