@@ -70,10 +70,18 @@ def test_mcp_handlers_write_read_fix_inspect_dump(tmp_path):
         )
         assert recalled["mode"] == "lookup"
         assert memory_id in recalled["memory_ids"]
+        assert set(recalled["cards"][0]) == {"memory_id", "subject", "fact", "kind"}
         assert "mode" not in tools.get_tool("memory_recall").parameters["properties"]
 
         fetched = await tools.call_tool("memory_get", {"memory_id": memory_id})
         assert fetched["source_span"][0]["content"].startswith("I prefer")
+
+        amended = await tools.call_tool(
+            "memory_correct",
+            {"memory_id": memory_id, "fact": "prefers quiet ryokans"},
+        )
+        assert amended["fact"] == "prefers quiet ryokans"
+        assert amended["validity"] == "active"
 
         corrected = await tools.call_tool(
             "memory_correct", {"memory_id": memory_id, "status": "superseded"}

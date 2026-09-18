@@ -9,7 +9,7 @@ from jm.embed import Embedder, FakeEmbedder, OllamaEmbedder
 from jm.extract import parse_cards, parse_turns
 from jm.recall import run_recall
 from jm.store import Store
-from jm.types import Validity
+from jm.types import CardIn, Kind, Lifecycle, Validity
 
 
 class Memory:
@@ -52,14 +52,63 @@ class Memory:
     def correct(
         self,
         memory_id: str,
-        status: str,
+        status: str | None = None,
         note: str | None = None,
         superseded_by: str | None = None,
+        *,
+        subject: str | None = None,
+        fact: str | None = None,
+        kind: str | None = None,
+        lifecycle: str | None = None,
+        event_date: str | None = None,
     ) -> dict[str, Any]:
-        validity = Validity(status)
-        card = self.store.set_validity(
-            memory_id, validity, note=note, superseded_by=superseded_by
+        amending = any(
+            value is not None
+            for value in (subject, fact, kind, lifecycle, event_date)
         )
+        if status is None and not amending:
+            raise ValueError("status or an amendment field is required")
+
+        card = None
+        if amending:
+            current = self.store.get_card(memory_id, with_span=False)
+            if current is None:
+                raise KeyError(memory_id)
+            next_subject = subject if subject is not None else current.subject
+            next_fact = fact if fact is not None else current.fact
+            next_kind = Kind(kind) if kind is not None else current.kind
+            next_lifecycle = (
+                Lifecycle(lifecycle) if lifecycle is not None else current.lifecycle
+            )
+            next_event = event_date if event_date is not None else current.event_date
+            parsed = CardIn(
+                subject=next_subject,
+                fact=next_fact,
+                kind=next_kind,
+                lifecycle=next_lifecycle,
+                event_date=next_event,
+                turn_start=current.turn_start,
+                turn_end=current.turn_end,
+            )
+            vector = self.embedder.embed_docs([parsed.compact()])[0]
+            card = self.store.amend_card(
+                memory_id,
+                subject=parsed.subject,
+                fact=parsed.fact,
+                kind=parsed.kind.value,
+                lifecycle=parsed.lifecycle.value,
+                event_date=parsed.event_date,
+                embedding=vector,
+                note=note,
+            )
+
+        if status is not None:
+            validity = Validity(status)
+            card = self.store.set_validity(
+                memory_id, validity, note=note, superseded_by=superseded_by
+            )
+
+        assert card is not None
         return card.to_public(include_span=False)
 
     def get(self, memory_id: str) -> dict[str, Any]:

@@ -155,6 +155,36 @@ class Store:
                         f"card provenance {card.turn_start}-{card.turn_end} "
                         "is not in this session"
                     )
+                twin = self._conn.execute(
+                    """
+                    SELECT id FROM cards
+                    WHERE session_id = ? AND subject = ? AND kind = ?
+                      AND turn_start = ? AND turn_end = ? AND validity = 'active'
+                    ORDER BY created_at
+                    LIMIT 1
+                    """,
+                    (
+                        session_id,
+                        card.subject,
+                        card.kind.value,
+                        card.turn_start,
+                        card.turn_end,
+                    ),
+                ).fetchone()
+                if twin is not None:
+                    memory_id = twin["id"]
+                    self._write_card_body(
+                        memory_id,
+                        subject=card.subject,
+                        fact=card.fact,
+                        kind=card.kind.value,
+                        lifecycle=card.lifecycle.value,
+                        event_date=card.event_date,
+                        embedding=vector,
+                        keep_validity=True,
+                    )
+                    ids.append(memory_id)
+                    continue
                 memory_id = new_memory_id()
                 text = card.compact()
                 self._conn.execute(
@@ -186,6 +216,97 @@ class Store:
                 ids.append(memory_id)
             self._conn.commit()
         return ids
+
+    def amend_card(
+        self,
+        memory_id: str,
+        *,
+        subject: str,
+        fact: str,
+        kind: str,
+        lifecycle: str,
+        event_date: str | None,
+        embedding: list[float],
+        note: str | None = None,
+    ) -> CardOut:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id FROM cards WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(memory_id)
+            self._write_card_body(
+                memory_id,
+                subject=subject,
+                fact=fact,
+                kind=kind,
+                lifecycle=lifecycle,
+                event_date=event_date,
+                embedding=embedding,
+                keep_validity=False,
+                note=note,
+            )
+            self._conn.commit()
+        card = self.get_card(memory_id, with_span=False)
+        assert card is not None
+        return card
+
+    def _write_card_body(
+        self,
+        memory_id: str,
+        *,
+        subject: str,
+        fact: str,
+        kind: str,
+        lifecycle: str,
+        event_date: str | None,
+        embedding: list[float],
+        keep_validity: bool,
+        note: str | None = None,
+    ) -> None:
+        if keep_validity:
+            self._conn.execute(
+                """
+                UPDATE cards
+                SET subject = ?, fact = ?, kind = ?, lifecycle = ?,
+                    event_date = ?, embedding = ?
+                WHERE id = ?
+                """,
+                (
+                    subject,
+                    fact,
+                    kind,
+                    lifecycle,
+                    event_date,
+                    pack_embedding(embedding),
+                    memory_id,
+                ),
+            )
+        else:
+            self._conn.execute(
+                """
+                UPDATE cards
+                SET subject = ?, fact = ?, kind = ?, lifecycle = ?,
+                    event_date = ?, embedding = ?, validity = 'active',
+                    note = COALESCE(?, note), superseded_by = NULL
+                WHERE id = ?
+                """,
+                (
+                    subject,
+                    fact,
+                    kind,
+                    lifecycle,
+                    event_date,
+                    pack_embedding(embedding),
+                    note,
+                    memory_id,
+                ),
+            )
+        self._conn.execute("DELETE FROM cards_fts WHERE id = ?", (memory_id,))
+        self._conn.execute(
+            "INSERT INTO cards_fts (id, text) VALUES (?, ?)",
+            (memory_id, compact_text(subject, fact)),
+        )
 
     def turn_indices(self, session_id: str) -> list[int]:
         with self._lock:

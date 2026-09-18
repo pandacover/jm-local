@@ -9,8 +9,8 @@ The host extracts cards. This process stores them, embeds them, and retrieves th
 | Tool | Role |
 | --- | --- |
 | `memory_remember` | Write. Ingest a turn or session slice. Always stores raw turns. Optional pre-extracted cards. |
-| `memory_recall` | Read. Question in. Heuristics choose lookup, compose, or replay internally. Returns cards, memory ids, and the mode used. |
-| `memory_correct` | Fix. Mark a card `wrong`, `dead`, or `superseded`. Corrected cards leave recall. |
+| `memory_recall` | Read. Question in. Heuristics choose lookup, compose, or replay internally. Returns compact cards (`memory_id`, `subject`, `fact`, `kind`). |
+| `memory_correct` | Fix. Mark a card `wrong`, `dead`, or `superseded`, or amend subject/fact/kind in place. |
 | `memory_get` | Inspect. Fetch one card by id, including `source_span`. |
 | `memory_dump` | Debug snapshot of the store. Not a retrieval path. |
 
@@ -62,7 +62,9 @@ The host should extract cards in the same `memory_remember` call when the slice 
 - `event_date` — `YYYY-MM-DD` or `unknown`
 - `turn_start` / `turn_end` — inclusive session turn indices (provenance)
 
-Recall reads at most 10 cards. Compose only widens the candidate pool. Replay adds `source_span` from the stored turns.
+Prefer a short list. Skip process, tooling, and changelog details unless the user asked to remember them. Same session + subject + kind + turn span updates the existing card.
+
+Lookup returns at most 3 compact cards. Compose and replay return at most 10. Replay adds `source_span` from the stored turns. Use `memory_get` when you need provenance or inactive cards.
 
 ## Tests
 

@@ -116,23 +116,30 @@ def test_status_alias_for_lifecycle(tmp_path):
     assert card["lifecycle"] == "stable"
 
 
+def _facts(result: dict) -> str:
+    return " ".join(c["fact"].lower() for c in result["cards"])
+
+
 def test_lookup_returns_preference(loaded: Memory):
     result = loaded.recall("Would a quiet Kyoto guesthouse suit me?")
     assert result["mode"] == "lookup"
-    assert len(result["cards"]) <= 10
+    assert len(result["cards"]) <= 3
     assert result["memory_ids"] == [c["memory_id"] for c in result["cards"]]
-    texts = " ".join(c["text"].lower() for c in result["cards"])
-    assert "quiet" in texts or "hotel" in texts
-    assert "source_span" not in result["cards"][0]
+    assert "quiet" in _facts(result) or "hotel" in _facts(result)
+    card = result["cards"][0]
+    assert set(card) == {"memory_id", "subject", "fact", "kind"}
+    assert "source_span" not in card
+    assert "text" not in card
 
 
 def test_compose_keeps_budget_and_finds_trips(loaded: Memory):
     result = loaded.recall("Write a one-line summary of my 2025 trips")
     assert result["mode"] == "compose"
     assert len(result["cards"]) <= 10
-    texts = " ".join(c["text"].lower() for c in result["cards"])
-    assert "kyoto" in texts
-    assert "lisbon" in texts
+    facts = _facts(result)
+    assert "kyoto" in facts
+    assert "lisbon" in facts
+    assert "text" not in result["cards"][0]
 
 
 def test_replay_includes_source_span(loaded: Memory):
@@ -140,6 +147,13 @@ def test_replay_includes_source_span(loaded: Memory):
     assert result["mode"] == "replay"
     assert result["cards"]
     assert "source_span" in result["cards"][0]
+    assert set(result["cards"][0]) == {
+        "memory_id",
+        "subject",
+        "fact",
+        "kind",
+        "source_span",
+    }
     spans = " ".join(
         turn["content"]
         for card in result["cards"]
@@ -150,7 +164,7 @@ def test_replay_includes_source_span(loaded: Memory):
 
 def test_correct_drops_from_recall_not_get(loaded: Memory):
     hit = loaded.recall("What hotel style does the user prefer?")
-    target = next(c for c in hit["cards"] if "hotel" in c["text"].lower())
+    target = next(c for c in hit["cards"] if "hotel" in c["fact"].lower())
     updated = loaded.correct(target["memory_id"], "wrong", note="stale")
     assert updated["validity"] == "wrong"
     later = loaded.recall("What hotel style does the user prefer?")
@@ -194,4 +208,86 @@ def test_top_k_budget(tmp_path):
     memory.remember("bulk", turns, cards)
     result = memory.recall("What travel notes and hotel facts do I have?")
     assert result["mode"] == "lookup"
-    assert len(result["cards"]) == 10
+    assert len(result["cards"]) == 3
+
+
+def test_remember_upserts_same_span(tmp_path):
+    memory = mem(tmp_path)
+    first = memory.remember("s1", SESSION_TURNS[:2], SESSION_CARDS[:1])
+    second = memory.remember(
+        "s1",
+        SESSION_TURNS[:2],
+        [
+            {
+                **SESSION_CARDS[0],
+                "fact": "prefers small, quiet hotels",
+            }
+        ],
+    )
+    assert first["memory_ids"] == second["memory_ids"]
+    assert memory.dump("s1")["stats"]["cards"] == 1
+    card = memory.get(second["memory_ids"][0])
+    assert card["fact"] == "prefers small, quiet hotels"
+
+
+def test_correct_amends_fact_in_place(loaded: Memory):
+    hit = loaded.recall("What hotel style does the user prefer?")
+    target = next(c for c in hit["cards"] if c["kind"] == "preference")
+    updated = loaded.correct(
+        target["memory_id"],
+        fact="prefers quiet ryokans",
+        note="fixed extraction",
+    )
+    assert updated["validity"] == "active"
+    assert updated["fact"] == "prefers quiet ryokans"
+    later = loaded.recall("What hotel style does the user prefer?")
+    assert target["memory_id"] in later["memory_ids"]
+    assert any("ryokan" in c["fact"] for c in later["cards"])
+
+
+def test_preference_question_ranks_preference_not_user_in_fact(tmp_path):
+    memory = mem(tmp_path)
+    turns = [
+        {"role": "user", "content": "I like quiet hotels.", "index": 0},
+        {
+            "role": "assistant",
+            "content": "Cursor launches jm over stdio; the user does not run a server.",
+            "index": 1,
+        },
+        {"role": "user", "content": "I asked you to save this session.", "index": 2},
+    ]
+    cards = [
+        {
+            "subject": "jm",
+            "fact": "MCP hosts launch the jm process over stdio; the user does not run a standalone server",
+            "kind": "fact",
+            "lifecycle": "stable",
+            "event_date": "unknown",
+            "turn_start": 1,
+            "turn_end": 1,
+        },
+        {
+            "subject": "User",
+            "fact": "asked to save this chat session into local memory",
+            "kind": "event",
+            "lifecycle": "completed",
+            "event_date": "2026-09-18",
+            "turn_start": 2,
+            "turn_end": 2,
+        },
+        {
+            "subject": "User",
+            "fact": "prefers small, quiet hotels",
+            "kind": "preference",
+            "lifecycle": "stable",
+            "event_date": "unknown",
+            "turn_start": 0,
+            "turn_end": 0,
+        },
+    ]
+    memory.remember("dogfood", turns, cards)
+    result = memory.recall("What does the user prefer?")
+    assert result["mode"] == "lookup"
+    assert len(result["cards"]) <= 3
+    assert result["cards"][0]["kind"] == "preference"
+    assert "quiet hotels" in result["cards"][0]["fact"]

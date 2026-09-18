@@ -23,12 +23,13 @@ Local atomic memory for chat sessions.
 
 Tools:
 - memory_remember: write a turn or session slice (raw always; cards when you extracted them)
-- memory_recall: read. Pass the question only. Routing is internal.
-- memory_correct: fix a card (wrong / dead / superseded)
+- memory_recall: read. Pass the question only. Routing is internal. Returns a short compact list.
+- memory_correct: fix a card (wrong / dead / superseded) or amend subject/fact/kind in place
 - memory_get: inspect one card by id, including source turns
 - memory_dump: debug snapshot of the store; not for answering questions
 
 Do not try to choose lookup, compose, or replay. memory_recall does that.
+Do not dump the store to answer a question. Prefer few cards on remember; skip process changelog.
 """
 
 REMEMBER_DOC = f"""\
@@ -72,7 +73,8 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     def memory_recall(question: str, as_of: str | None = None) -> dict[str, Any]:
         """Question in. Plans with heuristics and runs lookup, compose, or replay internally.
 
-        Returns compact cards, their memory_ids, and the mode that was used.
+        Returns compact cards (`memory_id`, `subject`, `fact`, `kind`), their ids, and the mode.
+        Lookup returns at most 3 cards. Compose and replay return at most 10.
         Do not pick a mode; pass only the question (and optional as_of timestamp).
         Replay responses include source_span on each card.
         """
@@ -81,17 +83,30 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     @mcp.tool(name="memory_correct")
     def memory_correct(
         memory_id: str,
-        status: str,
+        status: str | None = None,
         note: str | None = None,
         superseded_by: str | None = None,
+        subject: str | None = None,
+        fact: str | None = None,
+        kind: str | None = None,
+        lifecycle: str | None = None,
+        event_date: str | None = None,
     ) -> dict[str, Any]:
-        """Mark a card wrong, dead, or superseded. Does not delete source turns.
+        """Fix a card. Mark wrong / dead / superseded, or amend the note in place.
 
-        Corrected cards drop out of memory_recall. memory_get still returns them.
-        status: wrong | dead | superseded
+        Amendments (subject, fact, kind, lifecycle, event_date) rewrite the card,
+        re-embed it, and set it active. Corrected cards drop out of memory_recall
+        unless you amended them back. memory_get still returns inactive cards.
+        status: wrong | dead | superseded (optional when amending)
         """
+        amending = any(
+            value is not None
+            for value in (subject, fact, kind, lifecycle, event_date)
+        )
+        if status is None and not amending:
+            raise ValueError("status or an amendment field is required")
         allowed = {item.value for item in CORRECT_STATUSES}
-        if status not in allowed:
+        if status is not None and status not in allowed:
             raise ValueError(f"status must be one of {sorted(allowed)}")
         try:
             return memory.correct(
@@ -99,6 +114,11 @@ def build_server(memory: Memory | None = None) -> FastMCP:
                 status=status,
                 note=note,
                 superseded_by=superseded_by,
+                subject=subject,
+                fact=fact,
+                kind=kind,
+                lifecycle=lifecycle,
+                event_date=event_date,
             )
         except KeyError as exc:
             raise ValueError(f"unknown memory_id: {memory_id}") from exc
