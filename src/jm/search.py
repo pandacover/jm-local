@@ -7,20 +7,87 @@ from datetime import datetime
 
 from jm.embed import Embedder, cosine
 from jm.store import Store
-from jm.types import TOP_K, CardOut, compact_text
+from jm.types import TOP_K, CardOut, Kind
 
 CANDIDATE_K = 50
 RRF_K = 60
+KIND_INTENT_BOOST = 0.25
 TOKEN = re.compile(r"[A-Za-z0-9_]+")
 YEAR = re.compile(r"\b((?:19|20)\d{2})\b")
+PREFERENCE_INTENT = re.compile(
+    r"\b(prefer|prefers|preferred|preference|preferences|like|likes|liked|"
+    r"dislike|want|wants|wanted|rather|favorite|favourite)\b",
+    re.I,
+)
+
+QUERY_STOPWORDS = {
+    "a",
+    "an",
+    "the",
+    "of",
+    "to",
+    "in",
+    "on",
+    "for",
+    "and",
+    "or",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "am",
+    "i",
+    "me",
+    "my",
+    "we",
+    "our",
+    "you",
+    "your",
+    "it",
+    "this",
+    "that",
+    "these",
+    "those",
+    "with",
+    "from",
+    "at",
+    "as",
+    "by",
+    "do",
+    "did",
+    "does",
+    "what",
+    "which",
+    "who",
+    "whom",
+    "how",
+    "when",
+    "where",
+    "why",
+    "can",
+    "could",
+    "would",
+    "should",
+    "please",
+    "tell",
+    "about",
+    "user",
+    "users",
+}
 
 
 def tokenize(text: str) -> list[str]:
     return TOKEN.findall(text.lower())
 
 
+def query_terms(text: str) -> list[str]:
+    return [token for token in tokenize(text) if len(token) > 1 and token not in QUERY_STOPWORDS]
+
+
 def fts_match(text: str) -> str:
-    terms = [token for token in tokenize(text) if len(token) > 1]
+    terms = query_terms(text)
     return " OR ".join(f'"{token}"' for token in terms)
 
 
@@ -48,13 +115,32 @@ def _as_of_ok(card: CardOut, as_of: str | None) -> bool:
         return True
 
 
+def _related(query_token: str, doc_token: str) -> bool:
+    if query_token == doc_token:
+        return True
+    if len(query_token) >= 4 and (
+        doc_token.startswith(query_token) or query_token.startswith(doc_token)
+    ):
+        return True
+    return False
+
+
+def _overlap_count(query_tokens: set[str], fact: str) -> int:
+    doc_tokens = set(tokenize(fact))
+    return sum(
+        1
+        for query_token in query_tokens
+        if any(_related(query_token, doc_token) for doc_token in doc_tokens)
+    )
+
+
 def _overlap_ids(query: str, cards: list[CardOut]) -> list[str]:
-    query_tokens = set(tokenize(query))
+    query_tokens = set(query_terms(query))
     scored: list[tuple[int, str]] = []
     for card in cards:
-        overlap = query_tokens & set(tokenize(compact_text(card.subject, card.fact)))
+        overlap = _overlap_count(query_tokens, card.fact)
         if overlap:
-            scored.append((len(overlap), card.memory_id))
+            scored.append((overlap, card.memory_id))
     scored.sort(reverse=True)
     return [mid for _, mid in scored[:CANDIDATE_K]]
 
@@ -117,16 +203,18 @@ def retrieve(
             score[mid] = max(score.get(mid, 0.0), value)
 
     query_years = years_in(query)
-    query_tokens = set(tokenize(query))
+    query_tokens = set(query_terms(query))
+    prefers = bool(PREFERENCE_INTENT.search(query))
     for mid, value in list(score.items()):
         card = active_by_id[mid]
         if query_years and card.event_date:
             if any(year in card.event_date for year in query_years):
                 score[mid] = value + 0.05
-        if card.kind.value in query_tokens:
+        if prefers and card.kind is Kind.preference:
+            score[mid] += KIND_INTENT_BOOST
+        elif card.kind.value in query_tokens:
             score[mid] += 0.01
-        text_tokens = set(tokenize(compact_text(card.subject, card.fact)))
-        overlap = len(query_tokens & text_tokens)
+        overlap = _overlap_count(query_tokens, card.fact)
         if overlap:
             score[mid] += min(0.03, 0.005 * overlap)
 

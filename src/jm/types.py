@@ -142,7 +142,18 @@ class CardOut(BaseModel):
     superseded_by: str | None = None
     source_span: list[SourceTurn] | None = None
 
-    def to_public(self, *, include_span: bool) -> dict[str, Any]:
+    def to_public(self, *, include_span: bool, compact: bool = False) -> dict[str, Any]:
+        if compact:
+            payload: dict[str, Any] = {
+                "memory_id": self.memory_id,
+                "subject": self.subject,
+                "fact": self.fact,
+                "kind": self.kind.value,
+            }
+            if include_span:
+                span = self.source_span or []
+                payload["source_span"] = [turn.model_dump(mode="json") for turn in span]
+            return payload
         payload = self.model_dump(mode="json")
         if not include_span:
             payload.pop("source_span", None)
@@ -160,11 +171,15 @@ class RecallResult(BaseModel):
         include_span = self.mode is Mode.replay
         return {
             "mode": self.mode.value,
-            "cards": [card.to_public(include_span=include_span) for card in self.cards],
+            "cards": [
+                card.to_public(include_span=include_span, compact=True)
+                for card in self.cards
+            ],
             "memory_ids": self.memory_ids,
         }
 
 
+LOOKUP_K = 3
 TOP_K = 10
 EMBED_DIM = 768
 

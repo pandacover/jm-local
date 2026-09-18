@@ -5,23 +5,28 @@ from __future__ import annotations
 from jm.types import CardIn, TurnIn
 
 EXTRACTION_CONTRACT = """\
-Extract durable, answer-bearing information from the supplied conversation as atomic memory cards, then pass them in `cards` on this same call.
+Extract a few durable, answer-bearing cards from this slice, then pass them in `cards` on this same call. Each card is one independently retrievable claim with an explicit subject. Do not merge unrelated claims. Prefer a short list over a complete changelog.
 
-Each card is one independently retrievable claim: a fact, event, preference, state, measurement, relation, list, or interaction, with an explicit subject. Do not merge unrelated claims.
+Keep:
+- preferences, standing facts, dated events, and decisions the user would ask about later
+- subject-explicit compact text; `fact` should still make sense next to `subject`
+- exact entities, dates, values, durations, and relations when they matter
+- event cards with subject + `event_date` so later recall can join them
+- lifecycle: completed events vs plans vs ongoing states vs stable facts
 
-Rules:
-- Write subject-explicit compact text. The `fact` field should still make sense next to `subject`.
-- Preserve exact entities, dates, values, durations, and relations when they matter.
-- Resolve local references from the surrounding turns. Do not invent details or use outside knowledge.
-- Event cards keep subject and time (`event_date`) so later recall can join them.
-- Distinguish completed events from plans, ongoing states, and stable facts via `lifecycle`.
-- When important interaction content cannot be represented compactly, keep a short card that points at the original turns.
+Skip:
+- process, tooling, and changelog details (how a server launches, tool lists, pull requests, test counts) unless the user asked to remember them
+- restating what the assistant just did
+- confirmations or interpretations the user did not make
+- a card per implementation detail of the current project
+
+Same session + subject + kind + turn span updates the existing card; do not mint duplicates. To fix a bad extraction, amend via memory_correct (new fact) instead of writing a sibling card.
 
 Card fields:
 - subject: who or what the card is about
 - fact: the compact note (one claim)
 - kind: fact | event | preference | state | measurement | relation | list | interaction
-- lifecycle: stable | completed | planned | ongoing
+- lifecycle: stable | completed | planned | ongoing (default stable)
 - event_date: YYYY-MM-DD, or "unknown"
 - turn_start, turn_end: inclusive session turn indices for provenance
 """

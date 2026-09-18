@@ -6,7 +6,7 @@ from jm.embed import Embedder
 from jm.planner import plan, rewrites
 from jm.search import retrieve
 from jm.store import Store
-from jm.types import TOP_K, Mode, RecallResult
+from jm.types import LOOKUP_K, TOP_K, Mode, RecallResult
 
 
 def run_recall(
@@ -15,10 +15,12 @@ def run_recall(
     question: str,
     *,
     as_of: str | None = None,
-    k: int = TOP_K,
+    k: int | None = None,
 ) -> RecallResult:
     mode = plan(question)
     extra = rewrites(question) if mode is Mode.compose else None
+    if k is None:
+        k = LOOKUP_K if mode is Mode.lookup else TOP_K
     cards = retrieve(
         store,
         embedder,
